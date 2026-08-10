@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fan Club Eric Perrot — Biathlon</title>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import { getDatabase, ref, get, set, push, update, remove }
+      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    // ─────────────────────────────────────────────────────
+    // 🔧 CONFIGURATION FIREBASE
+    // Remplace par tes valeurs : Firebase Console > Paramètres > SDK
+    // ─────────────────────────────────────────────────────
+    const firebaseConfig = {
+      apiKey: "AIzaSyAAlIuUttbuiIaUe7onZYVMWhErAC5YwmA",
+      authDomain: "fan-club-eric-perrot-biathlon.firebaseapp.com",
+      databaseURL: "https://fan-club-eric-perrot-biathlon-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "fan-club-eric-perrot-biathlon",
+      storageBucket: "fan-club-eric-perrot-biathlon.firebasestorage.app",
+      messagingSenderId: "390967259086",
+      appId: "1:390967259086:web:9d2409211a561bdca6059f"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getDatabase(app);
+
+    const ADMIN_PSEUDO = 'admin-biathlon';
+
+    // Barème par défaut
+    // coef[place-1] : 1er=10, 2e=9, 3e=8, 4e=7, 5e=6, 6e+=5
+    // precision[ecart] : exact=10, ecart1=9 ... ecart9=1, ecart10+=0
+    const DEFAULT_SCORING = {
+      coef:      [10, 9, 8, 7, 6, 5],  // index 0=1er, 1=2e ... 5=6e et +
+      precision: [10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0] // index=écart, 10+=0
+    };
+
+    const S = {
+      pseudo: null, season: null, selRace: null, selPlayer: null,
+      races: {}, players: {}, scoring: DEFAULT_SCORING,
+      bets: {}, editRaceId: null,
+    };
+
+    // ── Helpers ───────────────────────────────────────────
+    const el = id => document.getElementById(id);
+    const btn = (text, cls, fn) => {
+      const b = document.createElement('button');
+      b.className = 'btn ' + cls; b.textContent = text;
+      b.addEventListener('click', fn); return b;
+    };
+    const openModal  = id => el('modal-' + id).classList.add('open');
+    const closeModal = id => el('modal-' + id).classList.remove('open');
+    const isAdmin = () => S.pseudo === ADMIN_PSEUDO;
+
+    function curSeason() { const d=new Date(),y=d.getFullYear(),m=d.getMonth(); return m>=8?y+'-'+(y+1):(y-1)+'-'+y; }
+    function allSeasons() { const sy=parseInt(curSeason().split('-')[0]),list=[]; for(let y=2023;y<=sy+2;y++) list.push(y+'-'+(y+1)); return list.reverse(); }
+    function seasonDates(k) { const [y1,y2]=k.split('-').map(Number); return {start:new Date(y1+'-09-01'),end:new Date(y2+'-05-01')}; }
+    function isLocked(r) { return new Date()>=new Date(r.date+'T'+r.time)||r.status==='done'; }
+    function seasonRaces() {
+      const {start,end}=seasonDates(S.season);
+      return Object.entries(S.races)
+        .filter(([,r])=>{const d=new Date(r.date);return d>=start&&d<end;})
+        .sort((a,b)=>new Date(a[1].date+'T'+a[1].time)-new Date(b[1].date+'T'+b[1].time));
+    }
+    function regularPlayers() { return Object.entries(S.players).filter(([p])=>p!==ADMIN_PSEUDO); }
+
+    function calcPts(pick, result) {
+      // pick et result sont des entiers (place d'Eric)
+      if (!pick || !result) return 0;
+      const ecart = Math.abs(pick - result);
+      const coefIdx = Math.min(result - 1, 5); // 0=1er...5=6e et +
+      const coef = S.scoring.coef[coefIdx];
+      const precision = ecart >= S.scoring.precision.length
+        ? 0
+        : S.scoring.precision[ecart];
+      return coef * precision;
+    }
+
+    // ── Firebase helpers ──────────────────────────────────
+    const dbGet    = async path => { const s=await get(ref(db,path)); return s.exists()?s.val():null; };
+    const dbSet    = async (path,val) => set(ref(db,path),val);
+    const dbUpdate = async (path,val) => update(ref(db,path),val);
+    const dbRemove = async path => remove(ref(db,path));
+    const dbPush   = async (path,val) => push(ref(db,path),val);
+
+    async function loadAll() {
+      const [races,players,scoring,bets] = await Promise.all([
+        dbGet('races'), dbGet('players'), dbGet('scoring'), dbGet('bets')
+      ]);
+      S.races   = races   || {};
+      S.players = players || {};
+      S.bets    = bets    || {};
+      if (scoring) S.scoring = scoring;
+    }
+
+    // ── Auth ──────────────────────────────────────────────
+    async function doLogin() {
+      const pseudo = el('loginPseudo').value.trim();
+      const errEl  = el('loginError');
+      errEl.classList.add('hidden');
+      if (!pseudo) { errEl.textContent = 'Entre ton pseudo.'; errEl.classList.remove('hidden'); return; }
+      if (pseudo === ADMIN_PSEUDO) {
+        S.pseudo = pseudo;
+        if (!S.players[ADMIN_PSEUDO]) await dbSet('players/' + ADMIN_PSEUDO, { pseudo: ADMIN_PSEUDO, isAdmin: true });
+        bootApp(); return;
+      }
+      if (S.players[pseudo]) { S.pseudo = pseudo; bootApp(); return; }
+      errEl.textContent = 'Pseudo introuvable. Crée ton compte avec "Nouveau joueur".';
+      errEl.classList.remove('hidden');
+    }
+
+    async function doNewPlayer() {
+      const pseudo = el('newPseudoInput').value.trim();
+      const errEl  = el('newPseudoError');
+      errEl.classList.add('hidden');
+      if (!pseudo) { errEl.textContent = 'Entre un pseudo.'; errEl.classList.remove('hidden'); return; }
+      if (pseudo === ADMIN_PSEUDO) { errEl.textContent = 'Ce pseudo est réservé.'; errEl.classList.remove('hidden'); return; }
+      if (S.players[pseudo]) { errEl.textContent = 'Ce pseudo est déjà pris.'; errEl.classList.remove('hidden'); return; }
+      await dbSet('players/' + pseudo, { pseudo, isAdmin: false });
+      S.players[pseudo] = { pseudo, isAdmin: false };
+      S.pseudo = pseudo;
+      closeModal('newPlayer');
+      bootApp();
+    }
+
+    function doLogout() {
+      S.pseudo = null;
+      el('mainApp').classList.add('hidden');
+      el('loginScreen').classList.remove('hidden');
+      el('loginPseudo').value = '';
+      el('loginError').classList.add('hidden');
+    }
+
+    // ── Boot ──────────────────────────────────────────────
+    function bootApp() {
+      el('loginScreen').classList.add('hidden');
+      el('mainApp').classList.remove('hidden');
+      el('userLabel').textContent = S.pseudo;
+      const av = el('avatarEl');
+      av.textContent = S.pseudo[0].toUpperCase();
+      if (isAdmin()) av.classList.add('admin'); else av.classList.remove('admin');
+      document.querySelectorAll('.admin-only').forEach(e => e.classList.toggle('hidden', !isAdmin()));
+      S.season = curSeason();
+      el('seasonSel').innerHTML = allSeasons().map(s => '<option value="'+s+'"'+(s===S.season?' selected':'')+'>'+s+'</option>').join('');
+      showTab('courses');
+    }
+
+    // ── Navigation ────────────────────────────────────────
+    function showTab(name) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+      document.querySelectorAll('.section').forEach(s => s.classList.add('hidden'));
+      el('section-' + name).classList.remove('hidden');
+      if (name === 'courses')    renderCourses();
+      if (name === 'pronostics') renderPronostics();
+      if (name === 'classement') renderClassement();
+      if (name === 'reglages')   renderReglages();
+    }
+
+    // ── Courses ───────────────────────────────────────────
+    function statusBadge(r) {
+      if (r.status === 'done') return '<span class="badge badge-green">Terminée</span>';
+      if (isLocked(r))         return '<span class="badge badge-gray">En cours</span>';
+      return '<span class="badge badge-blue">Pronostics ouverts</span>';
+    }
+
+    function renderCourses() {
+      const container = el('section-courses'); container.innerHTML = '';
+      const races = seasonRaces(), adm = isAdmin(), ps = regularPlayers();
+      const {start,end} = seasonDates(S.season);
+      const fmt = d => d.toLocaleDateString('fr-FR', {day:'numeric',month:'short',year:'numeric'});
+
+      const banner = document.createElement('div'); banner.className = 'info-banner';
+      banner.textContent = 'Saison ' + S.season + ' · ' + fmt(start) + ' – ' + fmt(end);
+      container.appendChild(banner);
+
+      if (!races.length) {
+        const e = document.createElement('div'); e.className = 'empty';
+        e.textContent = 'Aucune course.' + (adm ? ' Ajoutes-en dans Réglages.' : '');
+        container.appendChild(e); return;
+      }
+
+      races.forEach(([raceId, r]) => {
+        const card = document.createElement('div'); card.className = 'card';
+        const d = new Date(r.date).toLocaleDateString('fr-FR', {weekday:'long',day:'numeric',month:'long',year:'numeric'});
+        const myBet   = S.bets[raceId] ? S.bets[raceId][S.pseudo] : null;
+        const myPts   = (r.status === 'done' && myBet && r.result) ? calcPts(myBet, r.result) : null;
+        const betCount = S.bets[raceId] ? Object.keys(S.bets[raceId]).filter(p => p !== ADMIN_PSEUDO).length : 0;
+
+        let inner = '<div class="card-header"><div>';
+        inner += '<div class="card-title">' + r.name + ' — ' + r.discipline + '</div>';
+        inner += '<div class="card-sub">' + d + ' à ' + r.time + '</div>';
+        inner += '</div>' + statusBadge(r) + '</div>';
+
+        if (r.status === 'done' && r.result) {
+          inner += '<div class="result-banner">🎿 Eric Perrot a terminé <strong>' + r.result + (r.result===1?'er':'e') + '</strong></div>';
+        }
+        if (myPts !== null) inner += '<div style="font-size:13px;margin-bottom:8px;color:var(--text2)">Ton score : <strong style="color:var(--text)">' + myPts + ' pts</strong></div>';
+        if (!adm && !isLocked(r) && !myBet) inner += '<div style="font-size:13px;color:var(--red);margin-bottom:8px">Tu n\'as pas encore saisi ton pronostic !</div>';
+        if (!adm && myBet && !isLocked(r)) inner += '<div style="font-size:13px;color:var(--text2);margin-bottom:8px">Ton pari : <strong>' + myBet + (myBet===1?'er':'e') + ' place</strong></div>';
+
+        card.innerHTML = inner;
+
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:4px';
+        const counter = document.createElement('span');
+        counter.style.cssText = 'font-size:12px;color:var(--text3)';
+        counter.textContent = betCount + '/' + ps.length + ' pronostics';
+        row.appendChild(counter);
+
+        if (!adm && !isLocked(r)) row.insertBefore(btn('Mon pronostic','btn btn-primary btn-sm',()=>{S.selRace=raceId;S.selPlayer=null;showTab('pronostics');}),counter);
+        if (isLocked(r) && r.status==='done') row.insertBefore(btn('Voir les paris','btn btn-sm',()=>{S.selRace=raceId;S.selPlayer=null;showTab('pronostics');}),counter);
+        if (adm && isLocked(r) && r.status!=='done') row.insertBefore(btn('Saisir résultat','btn btn-primary btn-sm',()=>openResultModal(raceId)),counter);
+        if (adm && r.status==='done') row.insertBefore(btn('Modifier résultat','btn btn-sm',()=>openResultModal(raceId)),counter);
+
+        card.appendChild(row);
+        container.appendChild(card);
+      });
+    }
+
+    // ── Pronostics ────────────────────────────────────────
+    function renderPronostics() {
+      const container = el('section-pronostics'); container.innerHTML = '';
+      const races = seasonRaces();
+      if (!races.length) { container.innerHTML = '<div class="empty">Aucune course pour cette saison.</div>'; return; }
+
+      // Menu déroulant
+      const selWrap = document.createElement('div'); selWrap.style.cssText = 'margin-bottom:1rem';
+      const sel = document.createElement('select'); sel.className = 'fi';
+      sel.style.cssText = 'font-size:14px;padding:10px 12px;cursor:pointer';
+      const optBlank = document.createElement('option'); optBlank.value = ''; optBlank.textContent = '— Sélectionne une course —';
+      sel.appendChild(optBlank);
+      races.forEach(([raceId, r]) => {
+        const d = new Date(r.date).toLocaleDateString('fr-FR', {weekday:'short',day:'numeric',month:'short'});
+        const opt = document.createElement('option');
+        opt.value = raceId;
+        opt.textContent = r.name + ' — ' + r.discipline + ' · ' + d;
+        if (S.selRace === raceId) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', () => { S.selRace = sel.value || null; S.selPlayer = null; renderPronostics(); });
+      selWrap.appendChild(sel); container.appendChild(selWrap);
+
+      if (!S.selRace) { const e=document.createElement('div');e.className='empty';e.textContent='Sélectionne une course.';container.appendChild(e);return; }
+      const entry = races.find(([id]) => id === S.selRace); if (!entry) return;
+      const [raceId, race] = entry;
+      const lk = isLocked(race), adm = isAdmin(), ps = regularPlayers();
+
+      // Info card course
+      const infoCard = document.createElement('div'); infoCard.className = 'card';
+      infoCard.style.cssText = 'margin-bottom:12px;background:var(--bg2)';
+      const fullDate = new Date(race.date).toLocaleDateString('fr-FR', {weekday:'long',day:'numeric',month:'long',year:'numeric'});
+      let statusBadgeHtml = lk ? (race.status==='done'?'<span class="badge badge-green">Terminée</span>':'<span class="badge badge-gray">En cours</span>') : '<span class="badge badge-blue">Pronostics ouverts</span>';
+      let infoHtml = '<div class="card-header"><div><div class="card-title">' + race.name + '</div><div class="card-sub">' + race.discipline + ' · ' + fullDate + ' à ' + race.time + '</div></div>' + statusBadgeHtml + '</div>';
+      if (race.status === 'done' && race.result) {
+        infoHtml += '<div class="result-banner">🎿 Eric Perrot a terminé <strong>' + race.result + (race.result===1?'er':'e') + '</strong></div>';
+      }
+      infoCard.innerHTML = infoHtml;
+      container.appendChild(infoCard);
+
+      if (!lk && !adm) {
+        S.selPlayer = S.pseudo;
+        const area = document.createElement('div'); container.appendChild(area);
+        renderBetForm(area, raceId, race); return;
+      }
+      if (!lk && adm) {
+        const lbl = document.createElement('div'); lbl.style.cssText = 'font-size:13px;color:var(--text2);margin-bottom:8px';
+        lbl.textContent = 'Pronostics saisis (lecture seule) :'; container.appendChild(lbl);
+        buildPlayerSelector(container, raceId, race, ps); return;
+      }
+      const lbl = document.createElement('div'); lbl.style.cssText = 'font-size:13px;color:var(--text2);margin-bottom:8px';
+      lbl.textContent = 'Voir les pronostics de :'; container.appendChild(lbl);
+      buildPlayerSelector(container, raceId, race, ps);
+    }
+
+    function buildPlayerSelector(container, raceId, race, ps) {
+      const adm = isAdmin();
+      if (!S.selPlayer && ps.length) S.selPlayer = adm ? ps[0][0] : S.pseudo;
+      const pillsDiv = document.createElement('div'); pillsDiv.className = 'pills';
+      const formArea = document.createElement('div');
+      ps.forEach(([pseudo]) => {
+        const pb = document.createElement('button'); pb.className = 'pill' + (S.selPlayer===pseudo?' active':'');
+        pb.textContent = pseudo;
+        pb.addEventListener('click', () => {
+          S.selPlayer = pseudo;
+          pillsDiv.querySelectorAll('.pill').forEach(x => x.classList.remove('active'));
+          pb.classList.add('active');
+          formArea.innerHTML = '';
+          renderBetForm(formArea, raceId, race);
+        });
+        pillsDiv.appendChild(pb);
+      });
+      container.appendChild(pillsDiv); container.appendChild(formArea);
+      renderBetForm(formArea, raceId, race);
+    }
+
+    function renderBetForm(container, raceId, race) {
+      container.innerHTML = ''; if (!S.selPlayer) return;
+      const lk = isLocked(race), adm = isAdmin(), isOwn = S.selPlayer === S.pseudo;
+      const readonly = lk || (adm && !isOwn) || (!adm && !isOwn);
+      const bet    = (S.bets[raceId] && S.bets[raceId][S.selPlayer]) || null;
+      const result = race.result || null;
+      const pts    = (lk && bet && result) ? calcPts(bet, result) : null;
+
+      const card = document.createElement('div'); card.className = 'card';
+      let h = '<div class="card-header"><span class="card-title">' + S.selPlayer + '</span>';
+      h += lk ? '<span class="badge badge-gray">Course passée</span>' : '<span class="badge badge-blue">Ouvert</span>';
+      h += '</div>';
+      if (pts !== null) h += '<div style="font-size:14px;margin-bottom:16px">Score : <strong>' + pts + ' pts</strong></div>';
+
+      if (readonly) {
+        // Affichage lecture seule
+        h += '<div class="bet-display">';
+        h += '<div class="bet-label">Pari de ' + S.selPlayer + '</div>';
+        h += '<div class="bet-value">' + (bet ? bet + (bet===1?'er':'e') + ' place' : '—') + '</div>';
+        if (pts !== null && bet && result) {
+          const ecart = Math.abs(bet - result);
+          const coefIdx = Math.min(result - 1, 5);
+          const coef = S.scoring.coef[coefIdx];
+          const prec = ecart >= S.scoring.precision.length ? 0 : S.scoring.precision[ecart];
+          h += '<div class="bet-detail">Coef ' + coef + ' × Précision ' + prec + ' = <strong>' + pts + ' pts</strong></div>';
+        }
+        h += '</div>';
+        card.innerHTML = h;
+      } else {
+        h += '<div class="bet-label" style="margin-bottom:8px">Quelle place va terminer Eric Perrot ?</div>';
+        card.innerHTML = h;
+
+        const inputWrap = document.createElement('div'); inputWrap.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:16px';
+        const input = document.createElement('input');
+        input.type = 'number'; input.min = '1'; input.max = '200';
+        input.className = 'fi place-input';
+        input.style.cssText = 'max-width:120px;font-size:24px;font-weight:700;text-align:center;padding:12px';
+        input.placeholder = '?';
+        if (bet) input.value = bet;
+        const inputLbl = document.createElement('span');
+        inputLbl.style.cssText = 'font-size:16px;color:var(--text2)';
+        inputLbl.textContent = 'e place';
+        inputWrap.appendChild(input); inputWrap.appendChild(inputLbl);
+        card.appendChild(inputWrap);
+
+        const saveBtn = btn('Enregistrer mon pronostic', 'btn btn-primary', async () => {
+          if (isLocked(race)) { alert('Trop tard !'); return; }
+          const val = parseInt(input.value);
+          if (!val || val < 1) { alert('Entre une place valide.'); return; }
+          await dbSet('bets/' + raceId + '/' + S.pseudo, val);
+          if (!S.bets[raceId]) S.bets[raceId] = {};
+          S.bets[raceId][S.pseudo] = val;
+          renderBetForm(container, raceId, race);
+          renderCourses();
+        });
+        card.appendChild(saveBtn);
+      }
+      container.appendChild(card);
+    }
+
+    // ── Classement ────────────────────────────────────────
+    function renderClassement() {
+      const container = el('section-classement'); container.innerHTML = '';
+      const doneRaces = seasonRaces().filter(([,r]) => r.status==='done' && r.result);
+      const ps = regularPlayers();
+
+      container.innerHTML = '<div style="font-size:12px;color:var(--text2);margin-bottom:1rem">Saison ' + S.season + ' · ' + doneRaces.length + ' course' + (doneRaces.length!==1?'s':'') + ' terminée' + (doneRaces.length!==1?'s':'') + '</div>';
+
+      const scores = ps.map(([pseudo]) => {
+        let total = 0; const detail = [];
+        doneRaces.forEach(([raceId, r]) => {
+          const bet = S.bets[raceId] ? S.bets[raceId][pseudo] : null;
+          const pts = (bet && r.result) ? calcPts(bet, r.result) : 0;
+          total += pts;
+          if (bet) detail.push(r.name + ': ' + pts + 'pts (parié ' + bet + (bet===1?'er':'e') + ', réel ' + r.result + (r.result===1?'er':'e') + ')');
+        });
+        return { pseudo, total, detail };
+      }).sort((a, b) => b.total - a.total);
+
+      const lbCard = document.createElement('div'); lbCard.className = 'card';
+      const rankC = ['gold','silver','bronze'];
+      if (scores.length) {
+        scores.forEach((s, i) => {
+          const row = document.createElement('div'); row.className = 'lb-row';
+          row.innerHTML = '<div class="lb-rank '+(rankC[i]||'')+'">'+(i+1)+'</div><div style="flex:1"><div class="lb-name">'+s.pseudo+'</div><div class="lb-detail">'+(s.detail.join(' · ')||'Aucun résultat')+'</div></div><div class="lb-pts">'+s.total+' pts</div>';
+          lbCard.appendChild(row);
+        });
+      } else lbCard.innerHTML = '<div class="empty">Aucun résultat.</div>';
+      container.appendChild(lbCard);
+    }
+
+    // ── Réglages ──────────────────────────────────────────
+    function renderReglages() {
+      if (!isAdmin()) { el('section-reglages').innerHTML = '<div class="empty">Accès réservé à l\'administrateur.</div>'; return; }
+      const container = el('section-reglages'); container.innerHTML = '';
+
+      // Joueurs
+      const pb = document.createElement('div'); pb.className = 'sec-block';
+      pb.innerHTML = '<div class="sec-lbl">Joueurs inscrits</div>';
+      const pl = document.createElement('div');
+      const players = regularPlayers();
+      if (!players.length) pl.innerHTML = '<div style="font-size:13px;color:var(--text2)">Aucun joueur encore.</div>';
+      else players.forEach(([pseudo]) => {
+        const row = document.createElement('div'); row.className = 's-row';
+        row.innerHTML = '<div class="s-info"><div class="s-name">' + pseudo + '</div></div>';
+        row.appendChild(btn('Supprimer','btn btn-sm btn-danger', async () => {
+          if (!confirm('Supprimer ' + pseudo + ' ?')) return;
+          await dbRemove('players/' + pseudo); delete S.players[pseudo]; renderReglages();
+        }));
+        pl.appendChild(row);
+      });
+      pb.appendChild(pl); container.appendChild(pb);
+
+      // Courses
+      const rb = document.createElement('div'); rb.className = 'sec-block';
+      rb.innerHTML = '<div class="sec-lbl">Courses — saison ' + S.season + '</div><div style="font-size:12px;color:var(--text2);margin-bottom:8px">Les courses sont ajoutées pour la saison visible en haut à droite.</div>';
+      const rl = document.createElement('div'); rl.id = 'raceListAdmin'; renderRaceList(rl);
+      rb.appendChild(rl); rb.appendChild(btn('+ Ajouter une course','btn btn-sm', openAddRace));
+      container.appendChild(rb);
+
+      // Barème
+      const scb = document.createElement('div'); scb.className = 'sec-block';
+      scb.innerHTML = '<div class="sec-lbl">Barème</div>';
+      const sc = document.createElement('div'); sc.className = 'card';
+      sc.innerHTML = '<div style="font-size:12px;color:var(--text2);margin-bottom:12px">Score = Coef (place d\'Eric) × Précision (écart avec ton pari)</div>';
+
+      // Coef table
+      const coefDiv = document.createElement('div'); coefDiv.style.cssText = 'margin-bottom:16px';
+      coefDiv.innerHTML = '<div style="font-size:13px;font-weight:600;margin-bottom:8px">Coef selon la place d\'Eric :</div>';
+      const coefLabels = ['1er','2e','3e','4e','5e','6e+'];
+      const coefRow = document.createElement('div'); coefRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
+      coefLabels.forEach((lbl, i) => {
+        const cell = document.createElement('div'); cell.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px';
+        cell.innerHTML = '<span style="font-size:11px;color:var(--text2)">' + lbl + '</span>';
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.min = '0'; inp.max = '99'; inp.className = 'mx-in';
+        inp.id = 'coef_' + i; inp.value = S.scoring.coef[i];
+        cell.appendChild(inp); coefRow.appendChild(cell);
+      });
+      coefDiv.appendChild(coefRow); sc.appendChild(coefDiv);
+
+      // Précision table
+      const precDiv = document.createElement('div');
+      precDiv.innerHTML = '<div style="font-size:13px;font-weight:600;margin-bottom:8px">Précision selon l\'écart :</div>';
+      const precRow = document.createElement('div'); precRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
+      for (let i = 0; i < 11; i++) {
+        const cell = document.createElement('div'); cell.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:4px';
+        cell.innerHTML = '<span style="font-size:11px;color:var(--text2)">' + (i===0?'Exact':'±'+i) + '</span>';
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.min = '0'; inp.max = '99'; inp.className = 'mx-in' + (i===0?' diag':'');
+        inp.id = 'prec_' + i; inp.value = S.scoring.precision[i];
+        cell.appendChild(inp); precRow.appendChild(cell);
+      }
+      precDiv.appendChild(precRow); sc.appendChild(precDiv);
+
+      // Exemple
+      const exDiv = document.createElement('div'); exDiv.style.cssText = 'margin-top:12px;font-size:12px;color:var(--text2);background:var(--bg2);padding:8px;border-radius:var(--radius-sm)';
+      exDiv.innerHTML = '💡 Exemple : Eric termine 3e (coef=8), tu avais parié 5e (écart=2, précision=8) → <strong>8×8 = 64 pts</strong>';
+      sc.appendChild(exDiv);
+
+      const scbtns = document.createElement('div'); scbtns.style.cssText = 'margin-top:14px;display:flex;gap:8px;align-items:center';
+      const savedMsg = document.createElement('span'); savedMsg.className = 'hidden';
+      savedMsg.style.cssText = 'font-size:12px;color:var(--green-tx)'; savedMsg.textContent = 'Enregistré !';
+      scbtns.appendChild(btn('Enregistrer','btn btn-primary btn-sm', async () => {
+        const coef = [0,1,2,3,4,5].map(i => parseInt(el('coef_'+i).value)||0);
+        const precision = [0,1,2,3,4,5,6,7,8,9,10].map(i => parseInt(el('prec_'+i).value)||0);
+        await dbSet('scoring', {coef, precision});
+        S.scoring = {coef, precision};
+        savedMsg.classList.remove('hidden'); setTimeout(() => savedMsg.classList.add('hidden'), 2000);
+      }));
+      scbtns.appendChild(btn('Réinitialiser','btn btn-sm', () => {
+        S.scoring = JSON.parse(JSON.stringify(DEFAULT_SCORING));
+        [0,1,2,3,4,5].forEach(i => { const inp=el('coef_'+i); if(inp) inp.value=S.scoring.coef[i]; });
+        [0,1,2,3,4,5,6,7,8,9,10].forEach(i => { const inp=el('prec_'+i); if(inp) inp.value=S.scoring.precision[i]; });
+      }));
+      scbtns.appendChild(savedMsg);
+      sc.appendChild(scbtns); scb.appendChild(sc); container.appendChild(scb);
+    }
+
+    function renderRaceList(container) {
+      container.innerHTML = '';
+      const races = seasonRaces();
+      if (!races.length) { container.innerHTML = '<div style="font-size:13px;color:var(--text2);margin-bottom:8px">Aucune course pour cette saison.</div>'; return; }
+      races.forEach(([raceId, r]) => {
+        const d = new Date(r.date).toLocaleDateString('fr-FR', {day:'numeric',month:'long'});
+        const row = document.createElement('div'); row.className = 's-row';
+        row.innerHTML = '<div class="s-info"><div class="s-name">' + r.name + '</div><div class="s-sub">' + d + ' ' + r.time + ' · ' + r.discipline + '</div></div>';
+        row.appendChild(btn('Modifier','btn btn-sm', () => openEditRace(raceId)));
+        row.appendChild(btn('Suppr.','btn btn-sm btn-danger', async () => {
+          if (!confirm('Supprimer cette course ?')) return;
+          await dbRemove('races/' + raceId); delete S.races[raceId];
+          renderReglages(); renderCourses();
+        }));
+        container.appendChild(row);
+      });
+    }
+
+    // ── Modals courses ────────────────────────────────────
+    function openAddRace() {
+      el('addRaceTitle').textContent = 'Nouvelle course — ' + S.season;
+      el('rn_name').value = ''; el('raceError').classList.add('hidden');
+      const {start,end} = seasonDates(S.season);
+      el('rn_date').value = new Date((start.getTime()+end.getTime())/2).toISOString().split('T')[0];
+      openModal('addRace');
+    }
+
+    async function saveRace() {
+      const name = el('rn_name').value.trim(), disc = el('rn_disc').value;
+      const date = el('rn_date').value, time = el('rn_time').value;
+      const errEl = el('raceError'); errEl.classList.add('hidden');
+      if (!name || !date) { errEl.textContent = 'Nom et date obligatoires.'; errEl.classList.remove('hidden'); return; }
+      const {start,end} = seasonDates(S.season), d = new Date(date);
+      if (d < start || d >= end) { errEl.textContent = 'Date hors saison ' + S.season + '.'; errEl.classList.remove('hidden'); return; }
+      const r = {name, discipline:disc, date, time, season:S.season, status:'upcoming', result:null};
+      const newRef = await dbPush('races', r); S.races[newRef.key] = r;
+      closeModal('addRace'); renderReglages(); renderCourses();
+    }
+
+    function openEditRace(raceId) {
+      S.editRaceId = raceId; const r = S.races[raceId];
+      el('editRaceBody').innerHTML =
+        '<div class="form-group"><label class="lbl">Nom / Lieu</label><input class="fi" id="er_name" value="' + r.name + '" /></div>' +
+        '<div class="form-row"><div class="form-group"><label class="lbl">Discipline</label><select class="fi" id="er_disc">' +
+        ['Sprint','Poursuite','Individuel','Mass Start'].map(d => '<option'+(r.discipline===d?' selected':'')+'>'+d+'</option>').join('') +
+        '</select></div></div>' +
+        '<div class="form-row"><div class="form-group"><label class="lbl">Date</label><input class="fi" type="date" id="er_date" value="' + r.date + '" /></div>' +
+        '<div class="form-group"><label class="lbl">Heure</label><input class="fi" type="time" id="er_time" value="' + r.time + '" /></div></div>';
+      openModal('editRace');
+    }
+
+    async function saveEditRace() {
+      const r = S.races[S.editRaceId];
+      const u = {name:el('er_name').value.trim()||r.name, discipline:el('er_disc').value, date:el('er_date').value, time:el('er_time').value};
+      await dbUpdate('races/' + S.editRaceId, u); Object.assign(S.races[S.editRaceId], u);
+      closeModal('editRace'); renderReglages(); renderCourses();
+    }
+
+    function openResultModal(raceId) {
+      S.editRaceId = raceId; const r = S.races[raceId];
+      el('resultTitle').textContent = 'Résultat — ' + r.name;
+      el('resultInput').value = r.result || '';
+      openModal('result');
+    }
+
+    async function saveResult() {
+      const val = parseInt(el('resultInput').value);
+      if (!val || val < 1) { alert('Entre une place valide.'); return; }
+      await dbUpdate('races/' + S.editRaceId, {result: val, status: 'done'});
+      S.races[S.editRaceId].result = val;
+      S.races[S.editRaceId].status = 'done';
+      closeModal('result'); renderCourses(); renderClassement();
+    }
+
+    // ── Init ──────────────────────────────────────────────
+    window.addEventListener('DOMContentLoaded', async () => {
+      await loadAll();
+      el('btnLogin').addEventListener('click', doLogin);
+      el('loginPseudo').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+      el('btnNewPlayer').addEventListener('click', () => { el('newPseudoInput').value=''; el('newPseudoError').classList.add('hidden'); openModal('newPlayer'); });
+      el('btnSaveNewPlayer').addEventListener('click', doNewPlayer);
+      el('newPseudoInput').addEventListener('keydown', e => { if(e.key==='Enter') doNewPlayer(); });
+      el('btnCancelNewPlayer').addEventListener('click', () => closeModal('newPlayer'));
+      el('btnLogout').addEventListener('click', doLogout);
+      document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => showTab(t.dataset.tab)));
+      el('seasonSel').addEventListener('change', () => { S.season=el('seasonSel').value; S.selRace=null; S.selPlayer=null; showTab(document.querySelector('.tab.active')?.dataset.tab||'courses'); });
+      el('btnCancelRace').addEventListener('click', () => closeModal('addRace'));
+      el('btnSaveRace').addEventListener('click', saveRace);
+      el('btnCancelEditRace').addEventListener('click', () => closeModal('editRace'));
+      el('btnSaveEditRace').addEventListener('click', saveEditRace);
+      el('btnCancelResult').addEventListener('click', () => closeModal('result'));
+      el('btnSaveResult').addEventListener('click', saveResult);
+      document.querySelectorAll('.modal-bg').forEach(m => m.addEventListener('click', e => { if(e.target===m) m.classList.remove('open'); }));
+    });
+  </script>
+
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{--bg:#fff;--bg2:#f5f5f3;--bg3:#efefec;--border:rgba(0,0,0,.10);--border2:rgba(0,0,0,.18);--text:#1a1a18;--text2:#6b6b67;--text3:#9b9b96;--green:#1D9E75;--green-bg:#EAF3DE;--green-tx:#3B6D11;--amber-bg:#FAEEDA;--amber-tx:#854F0B;--red:#A32D2D;--red-bg:#FCEBEB;--blue-bg:#E6F1FB;--blue-tx:#0C447C;--radius:10px;--radius-sm:6px}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg3);color:var(--text);font-size:15px;line-height:1.5;min-height:100vh}
+    #app{max-width:720px;margin:0 auto;padding:1rem}
+    .hidden{display:none!important}
+    .top-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;background:var(--bg);border:.5px solid var(--border);border-radius:var(--radius);padding:.75rem 1rem;margin-bottom:1rem}
+    .brand{font-size:16px;font-weight:600}.brand span{color:#1e5fa8}
+    .top-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .avatar{width:30px;height:30px;border-radius:50%;background:var(--blue-bg);color:var(--blue-tx);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
+    .avatar.admin{background:#EEEDFE;color:#534AB7}
+    select.season-sel{padding:5px 10px;font-size:13px;border:.5px solid var(--border2);border-radius:var(--radius-sm);background:var(--bg2);color:var(--text);cursor:pointer}
+    .tabs{display:flex;gap:2px;background:var(--bg);border:.5px solid var(--border);border-radius:var(--radius);padding:4px;margin-bottom:1rem;overflow-x:auto}
+    .tab{padding:7px 16px;font-size:13px;font-weight:500;border-radius:var(--radius-sm);border:none;cursor:pointer;background:none;color:var(--text2);white-space:nowrap}
+    .tab:hover{background:var(--bg2);color:var(--text)}.tab.active{background:var(--bg3);color:var(--text)}
+    .card{background:var(--bg);border:.5px solid var(--border);border-radius:var(--radius);padding:1rem 1.1rem;margin-bottom:12px}
+    .card-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:8px}
+    .card-title{font-size:15px;font-weight:600}.card-sub{font-size:12px;color:var(--text2);margin-top:2px}
+    .badge{font-size:11px;padding:3px 8px;border-radius:99px;font-weight:500;white-space:nowrap}
+    .badge-green{background:var(--green-bg);color:var(--green-tx)}.badge-blue{background:var(--blue-bg);color:var(--blue-tx)}.badge-gray{background:var(--bg2);color:var(--text2)}
+    .btn{padding:7px 14px;font-size:13px;font-weight:500;border-radius:var(--radius-sm);cursor:pointer;border:.5px solid var(--border2);background:var(--bg);color:var(--text)}
+    .btn:hover{background:var(--bg2)}.btn-primary{background:var(--text);color:var(--bg);border-color:var(--text)}.btn-primary:hover{opacity:.85;background:var(--text)}
+    .btn-sm{padding:5px 10px;font-size:12px}.btn-danger{border-color:#E24B4A;color:var(--red)}.btn-danger:hover{background:var(--red-bg)}
+    .form-group{margin-bottom:12px}label.lbl{font-size:13px;color:var(--text2);display:block;margin-bottom:4px}
+    input.fi,select.fi{width:100%;padding:8px 10px;font-size:14px;border:.5px solid var(--border2);border-radius:var(--radius-sm);background:var(--bg2);color:var(--text)}
+    input.fi:focus,select.fi:focus{outline:none;border-color:#1e5fa8}.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+    .pill{padding:5px 13px;border-radius:99px;font-size:13px;cursor:pointer;border:.5px solid var(--border2);background:var(--bg);color:var(--text2)}
+    .pill:hover{border-color:#1e5fa8;color:var(--text)}.pill.active{background:var(--text);color:var(--bg);border-color:var(--text)}
+    .lb-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:.5px solid var(--border)}.lb-row:last-child{border-bottom:none}
+    .lb-rank{font-size:18px;font-weight:700;min-width:28px;color:var(--text2)}.lb-rank.gold{color:#BA7517}.lb-rank.silver{color:#888780}.lb-rank.bronze{color:#993C1D}
+    .lb-name{flex:1;font-weight:600}.lb-detail{font-size:12px;color:var(--text3)}.lb-pts{font-weight:600;font-size:15px}
+    .mx-in{width:54px;padding:6px;font-size:14px;font-weight:600;text-align:center;border:.5px solid var(--border2);border-radius:var(--radius-sm);background:var(--bg);color:var(--text)}
+    .mx-in.diag{border-color:#1e5fa8}
+    .info-banner{font-size:12px;color:var(--text2);background:var(--bg2);border-radius:var(--radius-sm);padding:6px 10px;margin-bottom:1rem}
+    .result-banner{font-size:14px;background:var(--green-bg);color:var(--green-tx);border-radius:var(--radius-sm);padding:8px 12px;margin-bottom:10px}
+    .empty{text-align:center;padding:2rem;color:var(--text2);font-size:14px}
+    .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;align-items:center;justify-content:center}.modal-bg.open{display:flex}
+    .modal{background:var(--bg);border-radius:var(--radius);padding:1.5rem;max-width:480px;width:92%;border:.5px solid var(--border);max-height:90vh;overflow-y:auto}
+    .modal-title{font-size:16px;font-weight:600;margin-bottom:1rem}.modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:1rem}
+    .s-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:.5px solid var(--border)}.s-row:last-child{border-bottom:none}
+    .s-info{flex:1}.s-name{font-size:14px;font-weight:500}.s-sub{font-size:12px;color:var(--text2)}
+    .sec-lbl{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px}.sec-block{margin-bottom:1.5rem}
+    .loading{display:flex;align-items:center;gap:10px;padding:2rem;color:var(--text2);justify-content:center}
+    #loginScreen{max-width:380px;margin:3rem auto}.login-brand{font-size:24px;font-weight:700;margin-bottom:.25rem}.login-brand span{color:#1e5fa8}
+    .login-sub{font-size:14px;color:var(--text2);margin-bottom:1.5rem}.errmsg{font-size:13px;margin-top:5px;color:var(--red)}
+    .bet-display{background:var(--bg2);border-radius:var(--radius-sm);padding:16px;text-align:center}
+    .bet-label{font-size:13px;color:var(--text2);margin-bottom:8px}
+    .bet-value{font-size:32px;font-weight:700;color:var(--text);margin-bottom:8px}
+    .bet-detail{font-size:13px;color:var(--text2)}
+    .place-input:focus{outline:none;border-color:#1e5fa8}
+    @media(max-width:480px){.form-row{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="loginScreen">
+    <div class="card" style="padding:1.5rem">
+      <div class="login-brand"><span>Fan Club Eric Perrot</span> — Biathlon</div>
+      <div class="login-sub">Entre ton pseudo pour accéder à tes pronostics</div>
+      <div class="form-group"><label class="lbl">Pseudo</label><input class="fi" id="loginPseudo" placeholder="Ton pseudo" autocomplete="off" /></div>
+      <div class="errmsg hidden" id="loginError"></div>
+      <div style="display:flex;gap:8px;margin-top:.5rem">
+        <button class="btn btn-primary" style="flex:1" id="btnLogin">Se connecter</button>
+        <button class="btn" id="btnNewPlayer">Nouveau joueur</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="mainApp" class="hidden">
+    <div class="top-bar">
+      <div class="brand"><span>Fan Club Eric Perrot</span> — Biathlon</div>
+      <div class="top-right">
+        <select class="season-sel" id="seasonSel"></select>
+        <div class="avatar" id="avatarEl"></div>
+        <span style="font-size:13px;color:var(--text2)" id="userLabel"></span>
+        <button class="btn btn-sm" id="btnLogout">Déconnexion</button>
+      </div>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-tab="courses">Courses</button>
+      <button class="tab" data-tab="pronostics">Pronostics</button>
+      <button class="tab" data-tab="classement">Classement</button>
+      <button class="tab admin-only hidden" data-tab="reglages">Réglages ⚙</button>
+    </div>
+    <div id="section-courses"    class="section"></div>
+    <div id="section-pronostics" class="section hidden"></div>
+    <div id="section-classement" class="section hidden"></div>
+    <div id="section-reglages"   class="section hidden"></div>
+  </div>
+</div>
+
+<!-- Modals -->
+<div class="modal-bg" id="modal-newPlayer">
+  <div class="modal">
+    <div class="modal-title">Créer mon pseudo</div>
+    <div class="form-group"><label class="lbl">Pseudo</label><input class="fi" id="newPseudoInput" placeholder="Choisis ton pseudo" autocomplete="off" /></div>
+    <div class="errmsg hidden" id="newPseudoError"></div>
+    <div class="modal-footer">
+      <button class="btn" id="btnCancelNewPlayer">Annuler</button>
+      <button class="btn btn-primary" id="btnSaveNewPlayer">Créer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal-addRace">
+  <div class="modal">
+    <div class="modal-title" id="addRaceTitle">Nouvelle course</div>
+    <div class="form-group"><label class="lbl">Nom / Lieu</label><input class="fi" id="rn_name" placeholder="ex: Kontiolahti" /></div>
+    <div class="form-row">
+      <div class="form-group"><label class="lbl">Discipline</label>
+        <select class="fi" id="rn_disc">
+          <option>Sprint</option><option>Poursuite</option><option>Individuel</option><option>Mass Start</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label class="lbl">Date</label><input class="fi" type="date" id="rn_date" /></div>
+      <div class="form-group"><label class="lbl">Heure</label><input class="fi" type="time" id="rn_time" value="14:00" /></div>
+    </div>
+    <div class="errmsg hidden" id="raceError"></div>
+    <div class="modal-footer">
+      <button class="btn" id="btnCancelRace">Annuler</button>
+      <button class="btn btn-primary" id="btnSaveRace">Créer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal-editRace">
+  <div class="modal">
+    <div class="modal-title">Modifier la course</div>
+    <div id="editRaceBody"></div>
+    <div class="modal-footer">
+      <button class="btn" id="btnCancelEditRace">Annuler</button>
+      <button class="btn btn-primary" id="btnSaveEditRace">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal-result">
+  <div class="modal">
+    <div class="modal-title" id="resultTitle">Résultat d'Eric Perrot</div>
+    <div class="form-group">
+      <label class="lbl">Place d'Eric Perrot</label>
+      <input class="fi" type="number" id="resultInput" min="1" max="200" placeholder="ex: 3" style="font-size:24px;font-weight:700;text-align:center;padding:12px" />
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="btnCancelResult">Annuler</button>
+      <button class="btn btn-primary" id="btnSaveResult">Enregistrer</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>
