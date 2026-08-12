@@ -234,14 +234,23 @@
     function buildPlayerSelector(container,raceId,race,ps) {
       const adm=isAdmin();
       if(!S.selPlayer&&ps.length) S.selPlayer=adm?ps[0][0]:S.pseudo;
-      const pillsDiv=document.createElement('div'); pillsDiv.className='pills';
-      const formArea=document.createElement('div');
+      const selWrap=document.createElement('div'); selWrap.style.cssText='margin-bottom:1rem';
+      const sel=document.createElement('select'); sel.className='fi';
+      sel.style.cssText='font-size:14px;padding:10px 12px;cursor:pointer';
       ps.forEach(([pseudo])=>{
-        const pb=document.createElement('button'); pb.className='pill'+(S.selPlayer===pseudo?' active':''); pb.textContent=pseudo;
-        pb.addEventListener('click',()=>{S.selPlayer=pseudo;pillsDiv.querySelectorAll('.pill').forEach(x=>x.classList.remove('active'));pb.classList.add('active');formArea.innerHTML='';renderBetForm(formArea,raceId,race);});
-        pillsDiv.appendChild(pb);
+        const opt=document.createElement('option');
+        opt.value=pseudo; opt.textContent=pseudo;
+        if(S.selPlayer===pseudo) opt.selected=true;
+        sel.appendChild(opt);
       });
-      container.appendChild(pillsDiv); container.appendChild(formArea);
+      const formArea=document.createElement('div');
+      sel.addEventListener('change',()=>{
+        S.selPlayer=sel.value;
+        formArea.innerHTML='';
+        renderBetForm(formArea,raceId,race);
+      });
+      selWrap.appendChild(sel);
+      container.appendChild(selWrap); container.appendChild(formArea);
       renderBetForm(formArea,raceId,race);
     }
 
