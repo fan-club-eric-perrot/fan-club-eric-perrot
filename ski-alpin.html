@@ -15,13 +15,13 @@
     // Remplace par tes valeurs : Firebase Console > Paramètres > SDK
     // ─────────────────────────────────────────────────────
     const firebaseConfig = {
-      apiKey: "AIzaSyBFqqCxQayYdJRReoAz-W0_b3qnweuhXRk",
-      authDomain: "fan-club-eric-perrot-ski-alpin.firebaseapp.com",
-      databaseURL: "https://fan-club-eric-perrot-ski-alpin-default-rtdb.europe-west1.firebasedatabase.app",
-      projectId: "fan-club-eric-perrot-ski-alpin",
-      storageBucket: "fan-club-eric-perrot-ski-alpin.firebasestorage.app",
-      messagingSenderId: "916937095466",
-      appId: "1:916937095466:web:4de1d7c36fd11b4e304653"
+      apiKey:            "REMPLACE_PAR_TON_API_KEY",
+      authDomain:        "REMPLACE.firebaseapp.com",
+      databaseURL:       "https://REMPLACE-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId:         "REMPLACE",
+      storageBucket:     "REMPLACE.appspot.com",
+      messagingSenderId: "REMPLACE",
+      appId:             "REMPLACE"
     };
 
     const app = initializeApp(firebaseConfig);
@@ -44,10 +44,13 @@
     const isAdmin = () => S.pseudo === ADMIN_PSEUDO;
 
     function curSeason() { const d=new Date(),y=d.getFullYear(),m=d.getMonth(); return m>=8?y+'-'+(y+1):(y-1)+'-'+y; }
-    function allSeasons() { const sy=parseInt(curSeason().split('-')[0]),list=[]; for(let y=2023;y<=sy+2;y++) list.push(y+'-'+(y+1)); return list.reverse(); }
+    function allSeasons() { const sy=parseInt(curSeason().split('-')[0]),list=['test']; for(let y=2023;y<=sy+2;y++) list.push(y+'-'+(y+1)); return list.reverse(); }
     function seasonDates(k) { const [y1,y2]=k.split('-').map(Number); return {start:new Date(y1+'-09-01'),end:new Date(y2+'-05-01')}; }
     function isLocked(r) { return new Date()>=new Date(r.date+'T'+r.time)||r.status==='done'; }
     function seasonRaces() {
+      if(S.season==='test') return Object.entries(S.races)
+        .filter(([,r])=>r.season==='test')
+        .sort((a,b)=>new Date(a[1].date+'T'+a[1].time)-new Date(b[1].date+'T'+b[1].time));
       const {start,end}=seasonDates(S.season);
       return Object.entries(S.races)
         .filter(([,r])=>{const d=new Date(r.date);return d>=start&&d<end;})
@@ -170,7 +173,7 @@
       const {start,end}=seasonDates(S.season);
       const fmt=d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short',year:'numeric'});
       const banner=document.createElement('div'); banner.className='info-banner';
-      banner.textContent='Saison '+S.season+' · '+fmt(start)+' – '+fmt(end);
+      if(S.season==='test'){banner.textContent='Saison TEST · Aucune restriction de dates';}else{banner.textContent='Saison '+S.season+' · '+fmt(start)+' – '+fmt(end);}
       container.appendChild(banner);
       if(!races.length){const e=document.createElement('div');e.className='empty';e.textContent='Aucune course.'+(adm?' Ajoutes-en dans Réglages.':'');container.appendChild(e);return;}
       races.forEach(([raceId,r])=>{
@@ -417,7 +420,7 @@
       errEl.classList.add('hidden');
       if(!name||!date){errEl.textContent='Nom et date obligatoires.';errEl.classList.remove('hidden');return;}
       const {start,end}=seasonDates(S.season),d=new Date(date);
-      if(d<start||d>=end){errEl.textContent='Date hors saison '+S.season+'.';errEl.classList.remove('hidden');return;}
+      if(S.season!=='test'&&(d<start||d>=end)){errEl.textContent='Date hors saison '+S.season+'.';errEl.classList.remove('hidden');return;}
       const r={name,discipline:disc,gender,date,time,season:S.season,status:'upcoming',results:[]};
       const newRef=await dbPush('races',r); S.races[newRef.key]=r;
       closeModal('addRace'); renderReglages(); renderCourses();
