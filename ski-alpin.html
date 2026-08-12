@@ -43,14 +43,11 @@
     const closeModal = id => el('modal-'+id).classList.remove('open');
     const isAdmin = () => S.pseudo === ADMIN_PSEUDO;
 
-    function curSeason() { const d=new Date(),y=d.getFullYear(),m=d.getMonth(); return m>=8?y+'-'+(y+1):(y-1)+'-'+y; }
-    function allSeasons() { const sy=parseInt(curSeason().split('-')[0]),list=['test']; for(let y=2023;y<=sy+2;y++) list.push(y+'-'+(y+1)); return list.reverse(); }
-    function seasonDates(k) { const [y1,y2]=k.split('-').map(Number); return {start:new Date(y1+'-09-01'),end:new Date(y2+'-05-01')}; }
+    function curSeason() { const d=new Date(),y=d.getFullYear(),m=d.getMonth(); return m>=5?y+'-'+(y+1):(y-1)+'-'+y; }
+    function allSeasons() { const sy=parseInt(curSeason().split('-')[0]),list=[]; for(let y=2026;y<=sy+2;y++) list.push(y+'-'+(y+1)); return list.reverse(); }
+    function seasonDates(k) { const [y1,y2]=k.split('-').map(Number); return {start:new Date(y1+'-06-01'),end:new Date(y2+'-05-01')}; }
     function isLocked(r) { return new Date()>=new Date(r.date+'T'+r.time)||r.status==='done'; }
     function seasonRaces() {
-      if(S.season==='test') return Object.entries(S.races)
-        .filter(([,r])=>r.season==='test')
-        .sort((a,b)=>new Date(a[1].date+'T'+a[1].time)-new Date(b[1].date+'T'+b[1].time));
       const {start,end}=seasonDates(S.season);
       return Object.entries(S.races)
         .filter(([,r])=>{const d=new Date(r.date);return d>=start&&d<end;})
@@ -173,7 +170,7 @@
       const {start,end}=seasonDates(S.season);
       const fmt=d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short',year:'numeric'});
       const banner=document.createElement('div'); banner.className='info-banner';
-      if(S.season==='test'){banner.textContent='Saison TEST · Aucune restriction de dates';}else{banner.textContent='Saison '+S.season+' · '+fmt(start)+' – '+fmt(end);}
+      banner.textContent='Saison '+S.season+' · '+fmt(start)+' – '+fmt(end);
       container.appendChild(banner);
       if(!races.length){const e=document.createElement('div');e.className='empty';e.textContent='Aucune course.'+(adm?' Ajoutes-en dans Réglages.':'');container.appendChild(e);return;}
       races.forEach(([raceId,r])=>{
@@ -420,7 +417,7 @@
       errEl.classList.add('hidden');
       if(!name||!date){errEl.textContent='Nom et date obligatoires.';errEl.classList.remove('hidden');return;}
       const {start,end}=seasonDates(S.season),d=new Date(date);
-      if(S.season!=='test'&&(d<start||d>=end)){errEl.textContent='Date hors saison '+S.season+'.';errEl.classList.remove('hidden');return;}
+      if(d<start||d>=end){errEl.textContent='Date hors saison '+S.season+'.';errEl.classList.remove('hidden');return;}
       const r={name,discipline:disc,gender,date,time,season:S.season,status:'upcoming',results:[]};
       const newRef=await dbPush('races',r); S.races[newRef.key]=r;
       closeModal('addRace'); renderReglages(); renderCourses();
