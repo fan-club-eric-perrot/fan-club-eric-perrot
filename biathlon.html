@@ -193,7 +193,10 @@
         inner += '</div>' + statusBadge(r) + '</div>';
 
         if (r.status === 'done' && r.result) {
-          inner += '<div class="result-banner">🎿 Eric Perrot a terminé <strong>' + r.result + (r.result===1?'er':'e') + '</strong></div>';
+          const pos1=r.result;
+          const icon1=pos1===1?'🥇':pos1===2?'🥈':pos1===3?'🥉':pos1<=6?'🔵':'🎿';
+          const bannerStyle1=pos1===1?'background:rgba(186,117,23,.15);color:#854F0B;border:1px solid rgba(186,117,23,.3)':pos1===2?'background:rgba(136,135,128,.15);color:#555552;border:1px solid rgba(136,135,128,.3)':pos1===3?'background:rgba(153,60,29,.15);color:#993C1D;border:1px solid rgba(153,60,29,.3)':pos1<=6?'background:rgba(30,95,168,.10);color:#1e5fa8;border:1px solid rgba(30,95,168,.2)':'background:var(--green-bg);color:var(--green-tx)';
+          inner += '<div class="result-banner" style="'+bannerStyle1+'">'+icon1+' Eric Perrot a terminé <strong>'+pos1+(pos1===1?'er':'e')+'</strong></div>';
         }
         if (myPts !== null) inner += '<div style="font-size:13px;margin-bottom:8px;color:var(--text2)">Ton score : <strong style="color:var(--text)">' + myPts + ' pts</strong></div>';
         if (!adm && !isLocked(r) && !myBet) inner += '<div style="font-size:13px;color:var(--red);margin-bottom:8px">Tu n\'as pas encore saisi ton pronostic !</div>';
@@ -253,7 +256,10 @@
       let statusBadgeHtml = lk ? (race.status==='done'?'<span class="badge badge-green">Terminée</span>':'<span class="badge badge-gray">En cours</span>') : '<span class="badge badge-blue">Pronostics ouverts</span>';
       let infoHtml = '<div class="card-header"><div><div class="card-title">' + race.name + '</div><div class="card-sub">' + race.discipline + ' · ' + fullDate + ' à ' + race.time + '</div></div>' + statusBadgeHtml + '</div>';
       if (race.status === 'done' && race.result) {
-        infoHtml += '<div class="result-banner">🎿 Eric Perrot a terminé <strong>' + race.result + (race.result===1?'er':'e') + '</strong></div>';
+        const pos2=race.result;
+        const icon2=pos2===1?'🥇':pos2===2?'🥈':pos2===3?'🥉':pos2<=6?'🔵':'🎿';
+        const bannerStyle2=pos2===1?'background:rgba(186,117,23,.15);color:#854F0B;border:1px solid rgba(186,117,23,.3)':pos2===2?'background:rgba(136,135,128,.15);color:#555552;border:1px solid rgba(136,135,128,.3)':pos2===3?'background:rgba(153,60,29,.15);color:#993C1D;border:1px solid rgba(153,60,29,.3)':pos2<=6?'background:rgba(30,95,168,.10);color:#1e5fa8;border:1px solid rgba(30,95,168,.2)':'background:var(--green-bg);color:var(--green-tx)';
+        infoHtml += '<div class="result-banner" style="'+bannerStyle2+'">'+icon2+' Eric Perrot a terminé <strong>'+pos2+(pos2===1?'er':'e')+'</strong></div>';
       }
       infoCard.innerHTML = infoHtml;
       container.appendChild(infoCard);
@@ -370,7 +376,7 @@
           const bet = S.bets[raceId] ? S.bets[raceId][pseudo] : null;
           const pts = (bet && r.result) ? calcPts(bet, r.result) : 0;
           total += pts;
-          if (bet) detail.push(r.name + ': ' + pts + 'pts (parié ' + bet + (bet===1?'er':'e') + ', réel ' + r.result + (r.result===1?'er':'e') + ')');
+          if (bet) detail.push(r.name + ': ' + pts + 'pts');
         });
         return { pseudo, total, detail };
       }).sort((a, b) => b.total - a.total);
@@ -380,7 +386,11 @@
       if (scores.length) {
         scores.forEach((s, i) => {
           const row = document.createElement('div'); row.className = 'lb-row';
-          row.innerHTML = '<div class="lb-rank '+(rankC[i]||'')+'">'+(i+1)+'</div><div style="flex:1"><div class="lb-name">'+s.pseudo+'</div><div class="lb-detail">'+(s.detail.join(' · ')||'Aucun résultat')+'</div></div><div class="lb-pts">'+s.total+' pts</div>';
+          const bgColor = i===0?'rgba(186,117,23,.10)':i===1?'rgba(136,135,128,.10)':i===2?'rgba(153,60,29,.10)':i<6?'rgba(30,95,168,.08)':'transparent';
+          row.style.background = bgColor;
+          row.style.borderRadius = '8px';
+          row.style.padding = '10px 8px';
+          row.innerHTML = '<div class="lb-rank '+(rankC[i]||'')+'">'+(i+1)+'</div><div style="flex:1"><div class="lb-name">'+s.pseudo+'</div></div><div class="lb-pts">'+s.total+' pts</div>';
           lbCard.appendChild(row);
         });
       } else lbCard.innerHTML = '<div class="empty">Aucun résultat.</div>';
