@@ -326,9 +326,23 @@
         return {pseudo,total,history,detail};
       }).sort((a,b)=>b.total-a.total);
       container.innerHTML='<div style="font-size:12px;color:var(--text2);margin-bottom:1rem">Saison '+S.season+' · '+doneRaces.length+' course'+(doneRaces.length!==1?'s':'')+' terminée'+(doneRaces.length!==1?'s':'')+'</div>';
+
+      // Bannière personnelle
+      if(!isAdmin()&&scores.length){
+        const myRank=scores.findIndex(s=>s.pseudo===S.pseudo);
+        if(myRank>=0){
+          const myScore=scores[myRank];
+          const rankLabel=myRank===0?'🥇 1er':myRank===1?'🥈 2e':myRank===2?'🥉 3e':(myRank+1)+'e';
+          const banner=document.createElement('div');
+          banner.style.cssText='background:var(--blue-bg);color:var(--blue-tx);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:1rem;font-size:14px;display:flex;align-items:center;justify-content:space-between';
+          banner.innerHTML='<span>Mon classement : <strong>'+rankLabel+'</strong></span><span style="font-weight:600">'+myScore.total+' pts</span>';
+          container.appendChild(banner);
+        }
+      }
+
       const lbCard=document.createElement('div'); lbCard.className='card'; lbCard.style.marginBottom='12px';
       const rankC=['gold','silver','bronze'];
-      if(scores.length) scores.forEach((s,i)=>{const row=document.createElement('div');row.className='lb-row';row.innerHTML='<div class="lb-rank '+(rankC[i]||'')+'">'+(i+1)+'</div><div style="flex:1"><div class="lb-name">'+s.pseudo+'</div></div><div class="lb-pts">'+s.total+' pts</div>';lbCard.appendChild(row);});
+      if(scores.length) scores.forEach((s,i)=>{const row=document.createElement('div');row.className='lb-row';row.innerHTML='<div class="lb-rank '+(rankC[i]||'')+'">'+(i+1)+'</div><div style="flex:1"><div class="lb-name">'+s.pseudo+(s.pseudo===S.pseudo?' <span style="font-size:11px;background:var(--blue-bg);color:var(--blue-tx);padding:1px 6px;border-radius:99px">moi</span>':'')+'</div></div><div class="lb-pts">'+s.total+' pts</div>';lbCard.appendChild(row);});
       else lbCard.innerHTML='<div class="empty">Aucun résultat.</div>';
       container.appendChild(lbCard);
       if(doneRaces.length>=1&&scores.length){

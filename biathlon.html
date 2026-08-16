@@ -389,6 +389,19 @@
         return { pseudo, total, detail };
       }).sort((a, b) => b.total - a.total);
 
+      // Bannière personnelle
+      if (!isAdmin() && scores.length) {
+        const myRank = scores.findIndex(s => s.pseudo === S.pseudo);
+        if (myRank >= 0) {
+          const myScore = scores[myRank];
+          const rankLabel = myRank===0?'🥇 1er':myRank===1?'🥈 2e':myRank===2?'🥉 3e':(myRank+1)+'e';
+          const banner = document.createElement('div');
+          banner.style.cssText = 'background:#e8f0fb;color:#1e5fa8;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:1rem;font-size:14px;display:flex;align-items:center;justify-content:space-between';
+          banner.innerHTML = '<span>Mon classement : <strong>' + rankLabel + '</strong></span><span style="font-weight:600">' + myScore.total + ' pts</span>';
+          container.appendChild(banner);
+        }
+      }
+
       const lbCard = document.createElement('div'); lbCard.className = 'card';
       const rankC = ['gold','silver','bronze'];
       if (scores.length) {
@@ -398,7 +411,8 @@
           row.style.background = bgColor;
           row.style.borderRadius = '8px';
           row.style.padding = '10px 8px';
-          row.innerHTML = '<div class="lb-rank '+(rankC[i]||'')+'">'+(i+1)+'</div><div style="flex:1"><div class="lb-name">'+s.pseudo+'</div></div><div class="lb-pts">'+s.total+' pts</div>';
+          const moi = s.pseudo===S.pseudo?' <span style="font-size:11px;background:#e8f0fb;color:#1e5fa8;padding:1px 6px;border-radius:99px">moi</span>':'';
+          row.innerHTML = '<div class="lb-rank '+(rankC[i]||'')+'">'+(i+1)+'</div><div style="flex:1"><div class="lb-name">'+s.pseudo+moi+'</div></div><div class="lb-pts">'+s.total+' pts</div>';
           lbCard.appendChild(row);
         });
       } else lbCard.innerHTML = '<div class="empty">Aucun résultat.</div>';
