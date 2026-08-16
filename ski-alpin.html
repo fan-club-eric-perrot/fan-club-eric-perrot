@@ -276,13 +276,12 @@
       h+='</div>';
       if(pts!==null) h+='<div style="font-size:14px;margin-bottom:12px">Score : <strong>'+pts+' pts</strong></div>';
       const sorted=Object.values(S.skiers).sort((a,b)=>a.name.localeCompare(b.name));
-      h+='<datalist id="skiersDL">'+sorted.map(s=>'<option value="'+s.name+'">').join('')+'</datalist>';
       ['1er','2e','3e','4e','5e'].forEach((pos,i)=>{
         const val=picks[i]||''; let pill='';
-        if(lk&&results.length&&val){const pv=ptFor(i,val,results);pill=pv>0?'<span class="pts-pill '+(results[i]===val?'pts-exact':'pts-partial')+'"">+'+pv+' pts</span>':'<span class="pts-pill pts-none">0 pt</span>';}
+        if(lk&&results.length&&val){const pv=ptFor(i,val,results);pill=pv>0?'<span class="pts-pill '+(results[i]===val?'pts-exact':'pts-partial')+'">+'+pv+' pts</span>':'<span class="pts-pill pts-none">0 pt</span>';}
         h+='<div class="pos-row"><span class="pos-lbl">'+pos+'</span>';
         if(readonly) h+='<div style="flex:1;padding:6px 10px;font-size:13px;border:.5px solid var(--border);border-radius:var(--radius-sm);background:var(--bg2)">'+(val||'—')+'</div>'+pill;
-        else h+='<input list="skiersDL" class="pos-val" id="pi_'+i+'" value="'+val+'" placeholder="Skieur '+(i+1)+'" />';
+        else h+='<select class="pos-val" id="pi_'+i+'"><option value="">— Choisir —</option>'+sorted.map(s=>'<option value="'+s.name+'"'+(s.name===val?' selected':'')+'>'+s.name+'</option>').join('')+'</select>';
         h+='</div>';
       });
       card.innerHTML=h;
@@ -447,7 +446,9 @@
       el('resultsTitle').textContent='Résultats — '+r.name;
       const res=r.results||[];
       const sorted=Object.values(S.skiers).sort((a,b)=>a.name.localeCompare(b.name));
-      el('resultsBody').innerHTML='<datalist id="skiersDL2">'+sorted.map(s=>'<option value="'+s.name+'">').join('')+'</datalist>'+[0,1,2,3,4].map(i=>'<div class="pos-row"><span class="pos-lbl">'+['1er','2e','3e','4e','5e'][i]+'</span><input list="skiersDL2" class="pos-val" id="ri_'+i+'" value="'+(res[i]||'')+'" placeholder="Skieur '+(i+1)+'" /></div>').join('');
+      const opts='<option value="">— Choisir —</option>'+sorted.map(s=>'<option value="'+s.name+'">'+s.name+'</option>').join('');
+      el('resultsBody').innerHTML=[0,1,2,3,4].map(i=>'<div class="pos-row"><span class="pos-lbl">'+['1er','2e','3e','4e','5e'][i]+'</span><select class="pos-val" id="ri_'+i+'">'+opts+'</select></div>').join('');
+      [0,1,2,3,4].forEach(i=>{if(res[i]){const s=el('ri_'+i);if(s){Array.from(s.options).forEach(o=>{if(o.value===res[i])o.selected=true;});}}});
       openModal('results');
     }
     async function saveResults() {
