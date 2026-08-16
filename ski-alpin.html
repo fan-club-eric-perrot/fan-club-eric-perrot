@@ -193,7 +193,7 @@
         const counter=document.createElement('span'); counter.style.cssText='font-size:12px;color:var(--text3)'; counter.textContent=betCount+'/'+ps.length+' pronostics';
         row.appendChild(counter);
         if(!adm&&!isLocked(r)) row.insertBefore(btn('Mon pronostic','btn btn-primary btn-sm',()=>{S.selRace=raceId;S.selPlayer=null;showTab('pronostics');}),counter);
-        if(isLocked(r)&&r.status==='done') row.insertBefore(btn('Voir les paris','btn btn-sm',()=>{S.selRace=raceId;S.selPlayer=null;showTab('pronostics');}),counter);
+        if(isLocked(r)) row.insertBefore(btn('Voir les paris','btn btn-sm',()=>{S.selRace=raceId;S.selPlayer=null;showTab('pronostics');}),counter);
         if(adm&&isLocked(r)&&r.status!=='done') row.insertBefore(btn('Saisir résultats','btn btn-primary btn-sm',()=>openResultsModal(raceId)),counter);
         if(adm&&r.status==='done') row.insertBefore(btn('Modifier résultats','btn btn-sm',()=>openResultsModal(raceId)),counter);
         card.appendChild(row); container.appendChild(card);
@@ -227,7 +227,10 @@
       const [raceId,race]=entry,lk=isLocked(race),adm=isAdmin(),ps=regularPlayers();
       if(!lk&&!adm){S.selPlayer=S.pseudo;const a=document.createElement('div');container.appendChild(a);renderBetForm(a,raceId,race);return;}
       if(!lk&&adm){const lbl=document.createElement('div');lbl.style.cssText='font-size:13px;color:var(--text2);margin-bottom:8px';lbl.textContent='Pronostics saisis (lecture seule) :';container.appendChild(lbl);buildPlayerSelector(container,raceId,race,ps);return;}
-      const lbl=document.createElement('div');lbl.style.cssText='font-size:13px;color:var(--text2);margin-bottom:8px';lbl.textContent='Voir les pronostics de :';container.appendChild(lbl);
+      // Course en cours ou terminée : tout le monde voit tous les paris
+      const lbl=document.createElement('div');lbl.style.cssText='font-size:13px;color:var(--text2);margin-bottom:8px';
+      lbl.textContent=race.status==='done'?'Voir les pronostics de :':'Course en cours — Voir les pronostics de :';
+      container.appendChild(lbl);
       buildPlayerSelector(container,raceId,race,ps);
     }
 
