@@ -294,9 +294,18 @@
           await dbSet('bets/'+raceId+'/'+S.pseudo,np);
           if(!S.bets[raceId]) S.bets[raceId]={};
           S.bets[raceId][S.pseudo]=np;
-          renderBetForm(container,raceId,race); renderCourses();
+          savedBet.classList.remove('hidden');
+          setTimeout(()=>savedBet.classList.add('hidden'),3000);
+          renderCourses();
         });
-        sb.style.marginTop='10px'; card.appendChild(sb);
+        const savedBet=document.createElement('span');
+        savedBet.className='hidden';
+        savedBet.style.cssText='font-size:12px;color:var(--green-tx);font-weight:500';
+        savedBet.textContent='✓ Enregistré !';
+        const sbRow=document.createElement('div');
+        sbRow.style.cssText='display:flex;align-items:center;gap:10px;margin-top:10px';
+        sbRow.appendChild(sb); sbRow.appendChild(savedBet);
+        card.appendChild(sbRow);
       }
       container.appendChild(card);
     }
