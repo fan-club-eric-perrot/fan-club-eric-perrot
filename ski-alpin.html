@@ -106,7 +106,7 @@
         bootApp(); return;
       }
       if(S.players[pseudo]){S.pseudo=pseudo;bootApp();return;}
-      errEl.textContent='Pseudo introuvable. Crée ton compte avec "Nouveau joueur".';
+      errEl.textContent='Pseudo inconnu. Essaie un autre pseudo ou crée ton compte en cliquant sur "Nouveau joueur".';
       errEl.classList.remove('hidden');
     }
 
