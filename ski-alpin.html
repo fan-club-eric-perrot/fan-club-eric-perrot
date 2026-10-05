@@ -54,15 +54,34 @@
         .sort((a,b)=>new Date(a[1].date+'T'+a[1].time)-new Date(b[1].date+'T'+b[1].time));
     }
     function regularPlayers() { return Object.entries(S.players).filter(([p])=>p!==ADMIN_PSEUDO); }
-    function calcPts(picks,results) {
+    // Trouve la meilleure position d'un skieur (best case pour ex-aequo)
+    function bestPos(skier,results,ties) {
+      // Trouver toutes les positions du skieur (ex-aequo possible)
+      let best=-1;
+      results.forEach((s,j)=>{if(s===skier&&j<5&&(best===-1||j<best)) best=j;});
+      if(best===-1) return -1;
+      // Remonter aux positions liées pour trouver la meilleure
+      if(!ties||!ties.length) return best;
+      // Si la position best est dans un groupe d'ex-aequo, prendre le début du groupe
+      let start=best;
+      while(start>0&&ties[start-1]) start--;
+      return start;
+    }
+    function calcPts(picks,results,ties) {
       if(!picks||!results||!results.length) return 0;
       const filled=picks.filter(s=>s&&s!=='');
       if(new Set(filled).size!==filled.length) return 0;
       let pts=0;
-      picks.forEach((sk,i)=>{const j=results.indexOf(sk);if(j>=0&&j<5) pts+=S.scoring[i][j];});
+      picks.forEach((sk,i)=>{
+        const j=bestPos(sk,results,ties);
+        if(j>=0&&j<5) pts+=S.scoring[i][j];
+      });
       return pts;
     }
-    function ptFor(i,skier,results) { const j=results.indexOf(skier); return (j>=0&&j<5)?S.scoring[i][j]:0; }
+    function ptFor(i,skier,results,ties) {
+      const j=bestPos(skier,results,ties);
+      return (j>=0&&j<5)?S.scoring[i][j]:0;
+    }
 
     // ── Firebase helpers ──────────────────────────────────
     const dbGet    = async path => { const s=await get(ref(db,path)); return s.exists()?s.val():null; };
@@ -177,7 +196,7 @@
         const card=document.createElement('div'); card.className='card';
         const d=new Date(r.date).toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
         const myPicks=S.bets[raceId]?S.bets[raceId][S.pseudo]:null;
-        const myPts=(r.status==='done'&&myPicks)?calcPts(myPicks,r.results||[]):null;
+        const myPts=(r.status==='done'&&myPicks)?calcPts(myPicks,r.results||[],r.ties||[]):null;
         const betCount=S.bets[raceId]?Object.keys(S.bets[raceId]).filter(p=>p!==ADMIN_PSEUDO).length:0;
         let inner='<div class="card-header"><div><div class="card-title">'+r.name+' — '+r.discipline+'</div>';
         inner+='<div class="card-sub">'+d+' à '+r.time+' · '+(r.gender==='F'?'Femmes':'Hommes')+'</div></div>'+statusBadge(r)+'</div>';
@@ -185,7 +204,14 @@
         if(!adm&&!isLocked(r)&&!myPicks) inner+='<div style="font-size:13px;color:var(--red);margin-bottom:8px">Tu n\'as pas encore saisi ton pronostic !</div>';
         if(r.status==='done'&&r.results&&r.results.length){
           inner+='<div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text2);font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Résultats officiels</div>';
-          r.results.forEach((s,i)=>{inner+='<div class="res-row"><span style="min-width:22px">'+['🥇','🥈','🥉','4️⃣','5️⃣'][i]+'</span><span>'+s+'</span></div>';});
+          const ties=r.ties||[];
+          const medals=['🥇','🥈','🥉','4️⃣','5️⃣'];
+          r.results.forEach((s,i)=>{
+            const tiedWithPrev=i>0&&ties[i-1]&&r.results[i-1]===s;
+            const medal=tiedWithPrev?medals[bestPos(s,r.results,ties)]:medals[i];
+            const tiedBadge=ties[i]&&i<4?'<span class="badge badge-green" style="font-size:10px;margin-left:6px">ex-æquo</span>':'';
+            inner+='<div class="res-row"><span style="min-width:22px">'+medal+'</span><span>'+s+tiedBadge+'</span></div>';
+          });
           inner+='</div>';
         }
         card.innerHTML=inner;
@@ -263,7 +289,7 @@
       const readonly=lk||(adm&&!isOwn)||(!adm&&!isOwn);
       const picks=(S.bets[raceId]&&S.bets[raceId][S.selPlayer])||['','','','',''];
       const results=race.results||[];
-      const pts=(lk&&results.length)?calcPts(picks,results):null;
+      const pts=(lk&&results.length)?calcPts(picks,results,race.ties||[]):null;
 
       // Info card de la course
       const infoCard=document.createElement('div'); infoCard.className='card';
@@ -281,7 +307,7 @@
       const sorted=Object.values(S.skiers).sort((a,b)=>a.name.localeCompare(b.name));
       ['1er','2e','3e','4e','5e'].forEach((pos,i)=>{
         const val=picks[i]||''; let pill='';
-        if(lk&&results.length&&val){const pv=ptFor(i,val,results);pill=pv>0?'<span class="pts-pill '+(results[i]===val?'pts-exact':'pts-partial')+'">+'+pv+' pts</span>':'<span class="pts-pill pts-none">0 pt</span>';}
+        if(lk&&results.length&&val){const pv=ptFor(i,val,results,race.ties||[]);const bj=bestPos(val,results,race.ties||[]);pill=pv>0?'<span class="pts-pill '+(bj===i?'pts-exact':'pts-partial')+'">+'+pv+' pts</span>':'<span class="pts-pill pts-none">0 pt</span>';}
         h+='<div class="pos-row"><span class="pos-lbl">'+pos+'</span>';
         if(readonly) h+='<div style="flex:1;padding:6px 10px;font-size:13px;border:.5px solid var(--border);border-radius:var(--radius-sm);background:var(--bg2)">'+(val||'—')+'</div>'+pill;
         else h+='<select class="pos-val" id="pi_'+i+'"><option value="">— Choisir —</option>'+sorted.map(s=>'<option value="'+s.name+'"'+(s.name===val?' selected':'')+'>'+s.name+'</option>').join('')+'</select>';
@@ -323,7 +349,7 @@
         let total=0; const history=[],detail=[];
         doneRaces.forEach(([raceId,r])=>{
           const picks=S.bets[raceId]?S.bets[raceId][pseudo]:null;
-          const pts=picks?calcPts(picks,r.results):0;
+          const pts=picks?calcPts(picks,r.results,r.ties||[]):0;
           total+=pts; history.push(total); if(picks) detail.push(r.name+': '+pts+'pts');
         });
         return {pseudo,total,history,detail};
@@ -471,17 +497,46 @@
       S.editRaceId=raceId; const r=S.races[raceId];
       el('resultsTitle').textContent='Résultats — '+r.name;
       const res=r.results||[];
+      const ties=r.ties||[false,false,false,false];
       const sorted=Object.values(S.skiers).sort((a,b)=>a.name.localeCompare(b.name));
       const opts='<option value="">— Choisir —</option>'+sorted.map(s=>'<option value="'+s.name+'">'+s.name+'</option>').join('');
-      el('resultsBody').innerHTML=[0,1,2,3,4].map(i=>'<div class="pos-row"><span class="pos-lbl">'+['1er','2e','3e','4e','5e'][i]+'</span><select class="pos-val" id="ri_'+i+'">'+opts+'</select></div>').join('');
-      [0,1,2,3,4].forEach(i=>{if(res[i]){const s=el('ri_'+i);if(s){Array.from(s.options).forEach(o=>{if(o.value===res[i])o.selected=true;});}}});
+      const body=el('resultsBody'); body.innerHTML='';
+      const posLabels=['1er','2e','3e','4e','5e'];
+      for(let i=0;i<5;i++){
+        const posRow=document.createElement('div'); posRow.className='pos-row';
+        posRow.innerHTML='<span class="pos-lbl">'+posLabels[i]+'</span>';
+        const sel=document.createElement('select'); sel.className='pos-val'; sel.id='ri_'+i;
+        sel.innerHTML=opts;
+        if(res[i]) Array.from(sel.options).forEach(o=>{if(o.value===res[i])o.selected=true;});
+        posRow.appendChild(sel); body.appendChild(posRow);
+        if(i<4){
+          const tieRow=document.createElement('div'); tieRow.style.cssText='padding:2px 0 6px 36px';
+          const tieBtn=document.createElement('button'); tieBtn.type='button'; tieBtn.id='tie_'+i;
+          const active=ties[i]===true;
+          tieBtn.style.cssText='padding:2px 10px;font-size:11px;border-radius:99px;border:.5px solid '+(active?'var(--green)':'var(--border2)')+';background:'+(active?'var(--green-bg)':'var(--bg2)')+';color:'+(active?'var(--green-tx)':'var(--text2)')+';cursor:pointer';
+          tieBtn.textContent=active?'= Ex-æquo ✓':'= Ex-æquo ?';
+          tieBtn.dataset.active=active?'1':'0';
+          tieBtn.addEventListener('click',()=>{
+            const now=tieBtn.dataset.active==='1';
+            tieBtn.dataset.active=now?'0':'1';
+            tieBtn.style.borderColor=!now?'var(--green)':'var(--border2)';
+            tieBtn.style.background=!now?'var(--green-bg)':'var(--bg2)';
+            tieBtn.style.color=!now?'var(--green-tx)':'var(--text2)';
+            tieBtn.textContent=!now?'= Ex-æquo ✓':'= Ex-æquo ?';
+          });
+          tieRow.appendChild(tieBtn); body.appendChild(tieRow);
+        }
+      }
       openModal('results');
     }
-    async function saveResults() {
+        async function saveResults() {
       const results=[0,1,2,3,4].map(i=>el('ri_'+i).value.trim()).filter(Boolean);
-      const status=results.length===5?'done':'open';
-      await dbUpdate('races/'+S.editRaceId,{results,status});
-      S.races[S.editRaceId].results=results; S.races[S.editRaceId].status=status;
+      const ties=[0,1,2,3].map(i=>{const b=el('tie_'+i);return b&&b.dataset.active==='1';});
+      const status=results.length>=1?'done':'open';
+      await dbUpdate('races/'+S.editRaceId,{results,ties,status});
+      S.races[S.editRaceId].results=results;
+      S.races[S.editRaceId].ties=ties;
+      S.races[S.editRaceId].status=status;
       closeModal('results'); renderCourses(); renderClassement();
     }
     async function saveSkier() {
